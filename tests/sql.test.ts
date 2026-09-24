@@ -13,7 +13,7 @@ import { verifyText } from "@/lib/verify";
 import { setCurrency } from "@/lib/format";
 
 const ROOT = path.join(__dirname, "..", "..");
-const MIGRATIONS = ["001_schema.sql", "002_analytics.sql", "003_features.sql", "004_import_batches.sql", "005_shops.sql", "006_automation_runs.sql", "007_automations.sql", "008_production.sql"];
+const MIGRATIONS = ["001_schema.sql", "002_analytics.sql", "003_features.sql", "004_import_batches.sql", "005_shops.sql", "006_automation_runs.sql", "007_automations.sql", "008_production.sql", "009_line.sql"];
 const allText = (s: { headline: string; bullets: string[]; recommendation: string }) =>
   [s.headline, ...s.bullets, s.recommendation].join("\n");
 
@@ -225,6 +225,38 @@ describe("going live: clear the imported sample, keep the shops", () => {
     await db.query("delete from shops where id = $1", [shop]);
     expect(await one<number>(db, "select count(*)::int x from day_entries")).toBe(0);
     expect(await one<number>(db, "select count(*)::int x from menu_items")).toBe(0);
+    await db.close();
+  });
+});
+
+describe("LINE bot: linking and confirming", () => {
+  it("a link code works once, only before it expires", async () => {
+    const db = await freshDb();
+    const shop = await one<string>(db, "select shop_create_demo(7) x");
+    const code = await one<string>(db, "select line_link_create($1) x", [shop]);
+    expect(code).toMatch(/^[0-9]{6}$/);
+    expect(await one<string>(db, "select line_link_claim($1, 'U1', 'ป้าแดง') x", [code])).toBe(shop);
+    expect(await one<string | null>(db, "select line_link_claim($1, 'U2') x", [code])).toBeNull();      // used up
+    const old = await one<string>(db, "select line_link_create($1) x", [shop]);
+    await db.query("update line_link_codes set expires_at = now() - interval '1 minute' where code = $1", [old]);
+    expect(await one<string | null>(db, "select line_link_claim($1, 'U3') x", [old])).toBeNull();       // expired
+    expect(await one<number>(db, "select count(*)::int x from line_links")).toBe(1);
+    await db.close();
+  });
+
+  it("confirming a draft twice records it once, and only for the LINE user who wrote it", async () => {
+    const db = await freshDb();
+    const shop = await one<string>(db, "select shop_create_demo(7) x");
+    const menu = await one<string>(db, "select id x from menu_items where shop_id = $1 limit 1", [shop]);
+    const draft = await one<string>(db, `insert into entry_drafts (shop_id, author, raw_text, parsed, line_user_id, entry_date)
+      values ($1, 'LINE', 'มันไก่ 3', $2::jsonb, 'U1', current_date) returning id x`, [shop, JSON.stringify({ sales: [{ menu_item_id: menu, quantity: 3 }] })]);
+    const before = await one<number>(db, "select count(*)::int x from day_entries where source = 'line'");
+    expect(await one<string | null>(db, "select line_draft_confirm($1, 'U2') x", [draft])).toBeNull();   // someone else
+    expect(await one<string | null>(db, "select line_draft_confirm($1, 'U1') x", [draft])).not.toBeNull();
+    expect(await one<string | null>(db, "select line_draft_confirm($1, 'U1') x", [draft])).toBeNull();   // double tap
+    expect(await one<number>(db, "select count(*)::int x from day_entries where source = 'line'")).toBe(before + 1);
+    // LINE is now a channel for automation rules
+    await db.query("insert into automation_rules (shop_id, kind, run_at, channel) values ($1, 'morning_summary', '08:00', 'line')", [shop]);
     await db.close();
   });
 });

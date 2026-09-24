@@ -3,7 +3,7 @@
 // `npm run dev` without ADMIN_PASSWORD stays open, same as isOwner().
 import { NextResponse, type NextRequest } from "next/server";
 
-const PUBLIC = ["/login", "/api/auth", "/api/cron", "/api/report", "/manifest.webmanifest", "/icon.svg", "/apple-icon"];
+const PUBLIC = ["/login", "/api/auth", "/api/cron", "/api/report", "/api/line/webhook", "/manifest.webmanifest", "/icon.svg", "/apple-icon"];
 
 async function expectedToken(secret: string): Promise<string> {
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);

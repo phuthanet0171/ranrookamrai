@@ -78,7 +78,8 @@ export default function RuleCard({ rule, meta, canEdit }: { rule: Rule; meta: Me
           <div className="field">
             <label htmlFor={`c-${rule.id}`}>ส่งไปที่</label>
             <select id={`c-${rule.id}`} className="input" value={channel} onChange={(e) => setChannel(e.target.value as Rule["channel"])}>
-              <option value="web">แจ้งเตือนในหน้าร้าน</option>
+              <option value="web">แจ้งเตือนในเว็บ</option>
+              <option value="line">LINE (ทุกคนที่เชื่อมกับร้าน)</option>
               <option value="discord">Discord</option>
             </select>
           </div>
@@ -89,6 +90,9 @@ export default function RuleCard({ rule, meta, canEdit }: { rule: Rule; meta: Me
             </div>
           )}
         </div>
+        {channel === "line" && (
+          <p className="muted" style={{ fontSize: 13, margin: "10px 0 0" }}>ส่งเข้า LINE ของทุกคนที่เชื่อมกับร้าน (ตั้งค่า → เชื่อม LINE) · แพ็กเกจฟรีของ LINE OA ส่งได้ประมาณ 300 ข้อความต่อเดือน</p>
+        )}
         {channel === "discord" && (
           <div className="field" style={{ marginTop: 10 }}>
             <label htmlFor={`w-${rule.id}`}>Discord webhook URL</label>

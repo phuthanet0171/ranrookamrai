@@ -9,6 +9,9 @@ import { ClearImportedButton, CreateShop, DeleteShopButton } from "@/components/
 import { hasData, loadBounds } from "@/lib/data";
 import ShopSwitcher from "@/components/shop/ShopSwitcher";
 import SignOutButton from "@/components/SignOutButton";
+import LineLink, { type LinkedUser } from "@/components/shop/LineLink";
+import { addFriendUrl, lineConfigured } from "@/lib/line";
+import { select } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "ตั้งค่า" };
@@ -30,6 +33,10 @@ export default async function SettingsPage({ searchParams }: { searchParams: SP 
   const { owner, shops, shop } = await currentShop();
   const [menu, bounds] = await Promise.all([shop ? getMenu(shop.id) : [], loadBounds().catch(() => null)]);
   const imported = Boolean(bounds && hasData(bounds));
+  // null = table missing (migration 009 not run yet)
+  const lineUsers = shop
+    ? await select<LinkedUser>("line_links", `shop_id=eq.${shop.id}&select=line_user_id,display_name,linked_at&order=linked_at`).catch(() => null)
+    : [];
 
   return (
     <>
@@ -47,6 +54,21 @@ export default async function SettingsPage({ searchParams }: { searchParams: SP 
               <div><h2>เมนูและต้นทุน</h2><span className="sub">ใส่ต้นทุนต่อหน่วย ระบบจะคำนวณกำไรให้ · ถ้ายังไม่รู้เว้นว่างได้</span></div>
             </div>
             <MenuEditor key={menu.map((m) => m.id).join()} shopId={shop.id} menu={menu} canEdit={owner} />
+          </section>
+        )}
+
+        {shop && owner && (
+          <section className="card" id="line">
+            <div className="card-head">
+              <div><h2>เชื่อม LINE</h2><span className="sub">จดยอดด้วยการพิมพ์ใน LINE · ถาม AI · รับสรุปตอนเช้าเข้า LINE</span></div>
+            </div>
+            {!lineConfigured() ? (
+              <p className="muted" style={{ margin: 0 }}>ยังไม่ได้ตั้งค่า LINE บนเซิร์ฟเวอร์ (LINE_CHANNEL_SECRET, LINE_CHANNEL_ACCESS_TOKEN) ดูวิธีใน docs/line.md</p>
+            ) : lineUsers === null ? (
+              <p className="muted" style={{ margin: 0 }}>รัน <code>python pipelinemigrate.py 009_line</code> ก่อน แล้วรีเฟรชหน้านี้</p>
+            ) : (
+              <LineLink shopId={shop.id} users={lineUsers} addFriend={addFriendUrl()} botId={process.env.LINE_BOT_ID ?? null} />
+            )}
           </section>
         )}
 

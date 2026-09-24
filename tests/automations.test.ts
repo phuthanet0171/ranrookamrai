@@ -91,7 +91,7 @@ describe("messages", () => {
   it("missing entry: only when nothing (non-voided) was recorded today", () => {
     expect(missingEntryMessage(shop, day())).toBeNull();
     const voidedOnly = day({ entries: [{ id: "e1", source: "web", author: null, created_at: "", voided: true }] });
-    expect(missingEntryMessage(shop, voidedOnly, "https://x.app")?.body).toContain("https://x.app/shop?shop=s1");
+    expect(missingEntryMessage(shop, voidedOnly, "https://x.app")?.body).toContain("https://x.app/record");
   });
 
   it("morning summary: sales vs last week, profit, money gap, best sellers, what to prepare", () => {

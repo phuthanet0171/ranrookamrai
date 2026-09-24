@@ -14,6 +14,8 @@ export type Run = {
   step<T>(name: string, fn: () => Promise<T>, describe?: (r: T) => string): Promise<T>;
   note(name: string, detail: string): void;
   ai(model: string, usage: Usage): void;
+  /** Which shop the run belongs to, when that is only known part-way (LINE messages). */
+  setShop(id: string): void;
   finish(status: RunStatus, extra?: { error?: string; output?: unknown }): Promise<void>;
   steps: RunStep[];
 };
@@ -24,6 +26,7 @@ export function startRun(kind: string, trigger: string, opts: { title?: string; 
   const steps: RunStep[] = [];
   let model: string | null = null;
   const tokens = { input: 0, output: 0 };
+  let shopId = opts.shopId ?? null;
 
   return {
     id: null,
@@ -42,6 +45,9 @@ export function startRun(kind: string, trigger: string, opts: { title?: string; 
     note(name, detail) {
       steps.push({ name, status: "ok", ms: 0, detail: detail.slice(0, 500) });
     },
+    setShop(id) {
+      shopId = id;
+    },
     ai(m, usage) {
       model = m;
       tokens.input += usage.input;
@@ -51,7 +57,7 @@ export function startRun(kind: string, trigger: string, opts: { title?: string; 
       if (!supabaseConfigured()) return;
       try {
         await insert("automation_runs", [{
-          kind, trigger, status, shop_id: opts.shopId ?? null, title: opts.title?.slice(0, 200) ?? null,
+          kind, trigger, status, shop_id: shopId, title: opts.title?.slice(0, 200) ?? null,
           started_at: started.toISOString(), duration_ms: Math.round(performance.now() - t0),
           model, input_tokens: tokens.input, output_tokens: tokens.output,
           steps, error: extra.error?.slice(0, 1000) ?? null, output: extra.output ?? null,

@@ -1,16 +1,20 @@
 // Automation rules for shops (007_automations.sql): what each kind checks, the message it
-// sends, and where it sends it. Messages are built by code from SQL results - no AI here,
-// so a scheduled alert can never contain an invented number.
+// sends, and where it sends it. Alerts are built by code from SQL results. The morning summary
+// may be written by AI (lib/morning.ts), but only with placeholders the code fills in - so a
+// scheduled message can never contain an invented number.
 import { addDays, count, dateWithDay, money } from "./format";
 import { WEEKDAY_TH } from "./labels";
 import { daySummary, forecast, periodSummary, type DaySummary, type Forecast, type PeriodSummary, type Shop } from "./shop";
-import { insert, rpc, update } from "./supabase";
-import { startRun } from "./runs";
+import { insert, rpc, select, update } from "./supabase";
+import { startRun, type Run } from "./runs";
+import { gemini } from "./gemini";
+import { push, text as lineText } from "./line";
+import { aiMorningMessage } from "./morning";
 
 export type RuleKind = "missing_entry" | "morning_summary" | "money_gap" | "weekly_summary";
 export type Rule = {
   id: string; shop_id: string; kind: RuleKind; enabled: boolean; run_at: string; days: number[];
-  channel: "web" | "discord"; target: string | null; threshold: number | null;
+  channel: "web" | "discord" | "line"; target: string | null; threshold: number | null;
   last_fired_on: string | null; last_status: string | null; last_message: string | null;
 };
 export type Message = { title: string; body: string };
@@ -41,7 +45,7 @@ export function missingEntryMessage(shop: Shop, day: DaySummary, appUrl?: string
   return {
     title: `⏰ ยังไม่ได้จดยอดวันนี้ · ${shop.name}`,
     body: [`${dateWithDay(day.date)} ยังไม่มีการจดยอดขาย`, "จดตอนนี้ใช้เวลาไม่ถึงนาที กำไรและพรุ่งนี้ควรเตรียมอะไรจะคำนวณให้ทันที",
-      appUrl ? `${appUrl}/shop?shop=${shop.id}` : ""].filter(Boolean).join("\n"),
+      appUrl ? `${appUrl}/record` : ""].filter(Boolean).join("\n"),
   };
 }
 
@@ -63,7 +67,7 @@ export function morningMessage(shop: Shop, sym: string, y: DaySummary, fc: Forec
     lines.push("", `วันนี้ควรเตรียม (จาก ${fc.samples} สัปดาห์ล่าสุด):`);
     for (const f of fc.items.slice(0, 5)) lines.push(`• ${f.name} ~${count(f.expected)} ${f.unit} (ปกติ ${count(f.low)}–${count(f.high)})`);
   }
-  if (appUrl) lines.push("", `${appUrl}/shop?shop=${shop.id}`);
+  if (appUrl) lines.push("", appUrl);
   return { title: `☀️ สรุปเมื่อวาน · ${shop.name}`, body: lines.join("\n") };
 }
 
@@ -97,7 +101,7 @@ export function weeklyMessage(shop: Shop, sym: string, p: PeriodSummary): Messag
 
 // ---------------------------------------------------------------- running a rule
 
-async function buildMessage(rule: Rule, shop: Shop, sym: string, today: string): Promise<{ message: Message | null; reason: string }> {
+async function buildMessage(rule: Rule, shop: Shop, sym: string, today: string, run: Run): Promise<{ message: Message | null; reason: string }> {
   const appUrl = process.env.APP_URL;
   switch (rule.kind) {
     case "missing_entry": {
@@ -106,7 +110,10 @@ async function buildMessage(rule: Rule, shop: Shop, sym: string, today: string):
     }
     case "morning_summary": {
       const [y, fc] = await Promise.all([daySummary(shop.id, addDays(today, -1)), forecast(shop.id, today)]);
-      return { message: morningMessage(shop, sym, y, fc, appUrl), reason: "ส่งสรุปตอนเช้า" };
+      if (!process.env.GEMINI_API_KEY) return { message: morningMessage(shop, sym, y, fc, appUrl), reason: "สรุปตอนเช้า (ไม่มี GEMINI_API_KEY ใช้ข้อความจากระบบ)" };
+      const r = await aiMorningMessage(shop, sym, y, fc, { model: gemini, appUrl });
+      if (r.model && r.usage) run.ai(r.model, r.usage);
+      return { message: r.message, reason: r.source === "ai" ? "สรุปตอนเช้าเขียนโดย AI (ตัวเลขเติมจากฐานข้อมูล)" : `สรุปตอนเช้าจากระบบ${r.issues?.length ? ` (AI ไม่ผ่าน: ${r.issues.join("; ").slice(0, 150)})` : ""}` };
     }
     case "money_gap": {
       const m = moneyGapMessage(shop, sym, await daySummary(shop.id, today), rule.threshold ?? 100);
@@ -129,6 +136,13 @@ async function deliver(rule: Rule, msg: Message): Promise<string> {
     });
     if (!res.ok) throw new Error(`Discord ตอบกลับ ${res.status}`);
     return "ส่งเข้า Discord แล้ว";
+  }
+  if (rule.channel === "line") {
+    const links = await select<{ line_user_id: string }>("line_links", `shop_id=eq.${rule.shop_id}&select=line_user_id`);
+    if (!links.length) throw new Error("ยังไม่มี LINE ที่เชื่อมกับร้านนี้ (ตั้งค่า → เชื่อม LINE)");
+    for (const l of links) await push(l.line_user_id, [lineText(`${msg.title}
+${msg.body}`)]);
+    return `ส่งเข้า LINE แล้ว ${links.length} คน`;
   }
   await insert("notifications", [{ shop_id: rule.shop_id, rule_id: rule.id, kind: rule.kind, title: msg.title, body: msg.body }]);
   return "บันทึกเป็นการแจ้งเตือนในหน้าร้านแล้ว";
@@ -158,7 +172,7 @@ export async function executeRule(rule: Rule, shop: Shop, sym: string,
       const mine = await run.step("claim", () => rpc<boolean>("automation_claim", { p_rule: rule.id, p_date: date }), (x) => (x ? "ได้สิทธิ์รันของวันนี้" : "มีผู้รันไปแล้ว"));
       if (!mine) return { rule_id: rule.id, kind: rule.kind, status: "skipped", detail: "วันนี้รันไปแล้ว" };
     }
-    const { message, reason } = await run.step("check", () => buildMessage(rule, shop, sym, date), (x) => x.reason);
+    const { message, reason } = await run.step("check", () => buildMessage(rule, shop, sym, date, run), (x) => x.reason);
     if (!message) return await done({ rule_id: rule.id, kind: rule.kind, status: "skipped", detail: reason });
     if (opts.dryRun) return await done({ rule_id: rule.id, kind: rule.kind, status: "preview", detail: "ตัวอย่าง (ไม่ได้ส่งจริง)", message });
     const sent = await run.step(`send ${rule.channel}`, () => deliver(rule, message), (x) => x);

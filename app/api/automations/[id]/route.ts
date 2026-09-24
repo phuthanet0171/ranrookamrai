@@ -37,7 +37,7 @@ function checkPatch(b: Record<string, unknown>): { patch: Record<string, unknown
     patch.days = [...new Set(d as number[])].sort();
   }
   if ("channel" in b) {
-    if (b.channel !== "web" && b.channel !== "discord") return { error: "ช่องทางไม่ถูกต้อง" };
+    if (b.channel !== "web" && b.channel !== "discord" && b.channel !== "line") return { error: "ช่องทางไม่ถูกต้อง" };
     patch.channel = b.channel;
   }
   if ("target" in b) {
