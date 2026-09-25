@@ -51,7 +51,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: SP 
         {shop && (
           <section className="card" id="menu">
             <div className="card-head">
-              <div><h2>เมนูและต้นทุน</h2><span className="sub">ใส่ต้นทุนต่อหน่วย ระบบจะคำนวณกำไรให้ · ถ้ายังไม่รู้เว้นว่างได้</span></div>
+              <div><h2>เมนูและต้นทุน</h2><span className="sub">ใส่ต้นทุนต่อหน่วย ระบบจะคำนวณกำไรโดยประมาณให้ · ถ้ายังไม่รู้เว้นว่างได้</span></div>
             </div>
             <MenuEditor key={menu.map((m) => m.id).join()} shopId={shop.id} menu={menu} canEdit={owner} />
           </section>
@@ -72,23 +72,21 @@ export default async function SettingsPage({ searchParams }: { searchParams: SP 
           </section>
         )}
 
-        <section className="card">
-          <h2 style={{ marginTop: 0 }}>ร้าน</h2>
-          {shop && <ShopSwitcher shops={shops} current={shop.id} next="/settings" />}
-          {owner && (
-            <details className="fold-plain">
-              <summary>+ เพิ่มร้านใหม่</summary>
-              <div style={{ marginTop: 12 }}><CreateShop /></div>
-            </details>
-          )}
+        <section className="card settings-list">
+          <Row href="/automations" title="การแจ้งเตือนอัตโนมัติ" text="สรุปตอนเช้า · เตือนเมื่อยังไม่จดยอด · ส่งเข้า LINE หรือเว็บ" />
         </section>
 
-        <section className="card settings-list">
-          <Row href="/automations" title="การแจ้งเตือนอัตโนมัติ" text="เตือนเมื่อยังไม่จดยอด · สรุปตอนเช้า · เงินขาด · สรุปรายสัปดาห์" />
-          <Row href="/import" title="นำเข้าไฟล์ยอดขาย" text="CSV หรือ Excel จาก POS / แอปอื่น" />
-          {imported && <Row href="/analytics" title="วิเคราะห์ไฟล์ที่นำเข้า" text="กราฟ แนวโน้ม สาเหตุที่ยอดเปลี่ยน และสรุปด้วย AI" />}
-          {imported && <Row href="/report" title="รายงานประจำวันจากไฟล์ที่นำเข้า" text="หน้าตาอีเมลสรุปยอดที่ส่งทุกเช้า" />}
-        </section>
+        <details className="card fold">
+          <summary><strong>ส่วนเสริม · ระยะถัดไป</strong></summary>
+          <p className="muted">หลายร้านและการนำเข้าไฟล์สำหรับการใช้งานเพิ่มเติม งานหลักคือจดยอดและดูสรุปของร้านนี้</p>
+          {shop && <ShopSwitcher shops={shops} current={shop.id} next="/settings" />}
+          {owner && <details className="fold-plain"><summary>+ เพิ่มร้านใหม่</summary><div style={{ marginTop: 12 }}><CreateShop /></div></details>}
+          <div className="settings-list">
+            <Row href="/import" title="นำเข้าไฟล์ยอดขาย" text="CSV หรือ Excel จาก POS / แอปอื่น" />
+            {imported && <Row href="/analytics" title="วิเคราะห์ไฟล์ที่นำเข้า" text="กราฟและสรุปข้อมูลที่นำเข้า" />}
+            {imported && <Row href="/report" title="รายงานจากไฟล์ที่นำเข้า" text="รายงานประจำวันของชุดข้อมูลเพิ่มเติม" />}
+          </div>
+        </details>
 
         <details className="card fold">
           <summary><strong>ขั้นสูง</strong> <span className="muted" style={{ fontSize: 13 }}>สำหรับผู้พัฒนาระบบ</span></summary>

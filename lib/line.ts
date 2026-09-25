@@ -63,6 +63,8 @@ export async function profileName(userId: string): Promise<string | null> {
 
 const QUICK = {
   items: [
+    { type: "action", action: { type: "message", label: "📝 จดยอด", text: "จดยอด" } },
+    { type: "action", action: { type: "message", label: "✏️ แก้ยอด", text: "แก้ยอด" } },
     { type: "action", action: { type: "message", label: "📊 สรุปวันนี้", text: "สรุปวันนี้" } },
     { type: "action", action: { type: "message", label: "🥘 พรุ่งนี้เตรียมอะไร", text: "พรุ่งนี้ควรเตรียมอะไร" } },
     { type: "action", action: { type: "message", label: "❓ วิธีใช้", text: "วิธีใช้" } },
@@ -75,9 +77,12 @@ export const HELP = [
   "วิธีใช้ร้านรู้กำไรใน LINE",
   "",
   "📝 จดยอด: พิมพ์ชื่อเมนูตามด้วยจำนวน",
-  "  มันไก่ 40 ชาเย็น 20",
-  "  ใส่เงินและรายจ่ายได้: สด 3000 โอน 1500 ค่าไก่ 800",
+  "  มันไก่ 40, ชาเย็น 20 และไก่ทอด 12",
+  "  ใส่เงินและรายจ่ายได้ในข้อความเดียว: สด 3000 โอน 1500 ค่าไก่ 800",
   "  ของเมื่อวาน: เมื่อวาน มันไก่ 35",
+  "  แก้จำนวนที่จดแล้ว: ลบข้าวมันไก่ 1 (หรือ ลบเมื่อวานข้าวมันไก่ 1)",
+  "  การแก้ยอดจะแสดงรายการเดิมและยอดใหม่ให้กดยืนยัน",
+  "  เงินสด = เงินจากยอดขาย ไม่รวมเงินทอนตั้งต้น; ถ้าหยิบไปซื้อของ ให้กรอกยอดก่อนหยิบ",
   "  ระบบจะให้กดยืนยันก่อนบันทึกทุกครั้ง",
   "",
   "💬 ถามอะไรก็ได้: เมื่อวานกำไรเท่าไหร่ / เดือนนี้เมนูไหนขายดี",
@@ -104,7 +109,7 @@ export function confirmCard(p: Parsed, draftId: string, date: string, sym: strin
   if (p.sales.length) lines.push({ type: "separator", margin: "md" }, row("ยอดขายรวม", money(salesTotal(p), sym), { bold: true }));
   if (p.cash !== null || p.transfer !== null) {
     lines.push({ type: "separator", margin: "md" });
-    if (p.cash !== null) lines.push(row("เงินสด", money(p.cash, sym)));
+    if (p.cash !== null) lines.push(row("เงินสดจากยอดขาย", money(p.cash, sym)));
     if (p.transfer !== null) lines.push(row("เงินโอน", money(p.transfer, sym)));
     if (p.sales.length) {
       const gap = (p.cash ?? 0) + (p.transfer ?? 0) - salesTotal(p);
@@ -139,6 +144,29 @@ export function confirmCard(p: Parsed, draftId: string, date: string, sym: strin
   };
 }
 
+export function correctionCard(name: string, unit: string, removed: number, before: number, after: number,
+  amountBefore: number, amountAfter: number, draftId: string, date: string, sym: string): LineMessage {
+  return {
+    type: "flex", altText: `ยืนยันแก้ยอด ${name} ${count(before)} → ${count(after)} ${unit}`,
+    contents: { type: "bubble",
+      header: { type: "box", layout: "vertical", contents: [
+        { type: "text", text: "ตรวจการแก้ยอด", weight: "bold", size: "lg" },
+        { type: "text", text: dateWithDay(date), size: "xs", color: "#888888" },
+      ] },
+      body: { type: "box", layout: "vertical", spacing: "sm", contents: [
+        row(name, `ลบ ${count(removed)} ${unit}`),
+        row("จำนวนเดิม → ใหม่", `${count(before)} → ${count(after)} ${unit}`, { bold: true }),
+        row("ยอดขายเดิม → ใหม่", `${money(amountBefore, sym)} → ${money(amountAfter, sym)}`),
+        { type: "text", text: "เงินสด/เงินโอนที่จดไว้ยังเท่าเดิม โปรดตรวจเงินขาด/เกินหลังแก้", size: "xs", color: "#888888", wrap: true },
+      ] },
+      footer: { type: "box", layout: "horizontal", spacing: "sm", contents: [
+        { type: "button", style: "secondary", action: { type: "postback", label: "ยกเลิก", data: `cancel:${draftId}`, displayText: "ยกเลิก" } },
+        { type: "button", style: "primary", action: { type: "postback", label: "ยืนยันแก้ยอด", data: `confirm:${draftId}`, displayText: "ยืนยัน" } },
+      ] },
+    },
+  };
+}
+
 /** After saving, or on "สรุปวันนี้": the day's numbers in a few lines. */
 export function dayText(shopName: string, d: DaySummary, sym: string, heading: string): string {
   const t = d.today;
@@ -150,7 +178,7 @@ export function dayText(shopName: string, d: DaySummary, sym: string, heading: s
     `ยอดขาย ${money(t.revenue, sym)}`,
     ...(t.gross_profit !== null ? [`กำไรโดยประมาณ ${money(t.gross_profit, sym)}`] : []),
     ...(t.money_gap !== null ? [Math.abs(t.money_gap) < 1 ? "เงินตรงกับยอดขาย ✓" : t.money_gap < 0 ? `⚠️ เงินขาด ${money(-t.money_gap, sym)}` : `เงินเกิน ${money(t.money_gap, sym)}`] : []),
-    ...(t.expenses > 0 ? [`รายจ่าย ${money(t.expenses, sym)} · เงินสุทธิ ${money(t.net_cash, sym)}`] : []),
+    ...(t.expenses > 0 ? [`รายจ่าย ${money(t.expenses, sym)} · ยอดขายหักรายจ่ายที่จด ${money(t.net_cash, sym)}`] : []),
     ...(top ? [`ขายดี: ${top}`] : []),
   ].join("\n");
 }

@@ -100,7 +100,7 @@ export const SHOP_TOOLS: Tool[] = [
   },
   {
     name: "shop_period",
-    description: "ภาพรวมของร้านช่วงวันที่ที่กำหนด เทียบกับช่วงก่อนหน้า: ยอดขาย กำไร รายจ่าย เงินขาด เมนูไหนทำเงินและอัตรากำไรต่อเมนู วันไหนขายดี รายจ่ายหมวดไหนมาก",
+    description: "ภาพรวมของร้านช่วงวันที่ที่กำหนด เทียบกับช่วงก่อนหน้า: ยอดขาย กำไรโดยประมาณ รายจ่าย เงินขาด เมนูไหนทำเงินและอัตรากำไรต่อเมนู วันไหนขายดี รายจ่ายหมวดไหนมาก",
     params: { start: "วันเริ่ม YYYY-MM-DD", end: "วันสุดท้าย YYYY-MM-DD" },
     async run(a, env) {
       if (env.scope.kind !== "shop") throw new Error("ใช้ได้เฉพาะร้าน");
@@ -116,6 +116,7 @@ export const SHOP_TOOLS: Tool[] = [
     async run(a, env) {
       if (env.scope.kind !== "shop") throw new Error("ใช้ได้เฉพาะร้าน");
       if (!isIsoDate(a.date)) throw new Error("date ต้องเป็นวันที่ YYYY-MM-DD");
+      if (a.date < env.scope.today) throw new Error("คาดการณ์ได้ตั้งแต่วันนี้เป็นต้นไป");
       if (daysBetween(env.scope.today, a.date) > 14) throw new Error("คาดการณ์ได้ไม่เกิน 14 วันข้างหน้า");
       const f = await rpc<Forecast>("shop_forecast", { p_shop: env.scope.shopId, p_date: a.date });
       return shopForecastFacts(env.prefix, f);
@@ -147,6 +148,8 @@ function systemPrompt(scope: AgentScope): string {
     where,
     "ขั้นตอน: ใช้เครื่องมือ (tools) เพื่อดึงข้อมูลเสมอก่อนตอบเรื่องตัวเลข คำนวณช่วงวันที่เองจากวันนี้ได้ (เช่น 7 วันล่าสุด เดือนนี้)",
     "ผลของเครื่องมือเป็นรายการ placeholder เช่น {t1_revenue.now} = ฿ 1,000 พร้อมค่าที่ระบบจะเติมให้",
+    "profit คือกำไรโดยประมาณจากต้นทุนเมนู ไม่ใช่กำไรสุทธิ; net คือเงินรับหักรายจ่ายที่บันทึก ไม่ใช่กำไรสุทธิ ใช้ profit_note เมื่อมีต้นทุนไม่ครบ",
+    "forecast เป็นค่าเฉลี่ยจาก SQL เท่านั้น ห้ามสร้างจำนวนหรือบวก buffer เอง ถ้าไม่มีเมนูคาดการณ์ให้บอกว่าข้อมูลไม่พอ",
     "กติกาบังคับ (ผิดแล้วคำตอบจะถูกทิ้ง):",
     "1. ห้ามพิมพ์ตัวเลขเองเลย (0-9 หรือเลขไทย) ตัวเลข วันที่ จำนวนเงิน เปอร์เซ็นต์ ต้องเป็น placeholder ที่คัดลอกมาตรงตัว",
     "2. ห้ามพิมพ์คำบอกทิศทางเอง (เพิ่มขึ้น ลดลง สูงกว่า ต่ำกว่า มากขึ้น น้อยลง ...) ให้ใช้ placeholder {x.dir} แทน",
@@ -171,6 +174,23 @@ const CANNOT_ANSWER: Tool = {
   async run() { return { lang: "th", facts: [] }; },
 };
 const MAX_CALLS_PER_ROUND = 3;
+
+/** The model chooses fixed tools; shop numbers and their labels are rendered by code. */
+function renderShopFacts(set: FactSet): string {
+  const labels: Record<string, string> = {
+    revenue: "ยอดขาย", profit: "กำไรโดยประมาณ", expenses: "รายจ่ายที่จด", net: "ยอดขายหักรายจ่ายที่จด",
+    cash: "เงินสดจากยอดขาย", transfer: "เงินโอน", money_in: "เงินที่รับ", gap: "เงินขาด/เกิน",
+    quantity: "จำนวนขาย", expected: "จำนวนแนะนำ", low: "ต่ำสุดที่เคยขาย", high: "สูงสุดที่เคยขาย",
+    margin: "อัตรากำไรโดยประมาณ", share: "สัดส่วนยอดขาย", profit_note: "ข้อจำกัดของกำไร",
+    dir: "ทิศทาง", pct: "เปอร์เซ็นต์เปลี่ยนแปลง", revenue_before: "ยอดขายช่วงก่อน", name: "เมนู",
+    date: "วันที่", weeks: "จำนวนสัปดาห์ตัวอย่าง", range: "ช่วงวันที่", status: "สถานะข้อมูล",
+  };
+  return set.facts.slice(0, 8).map((f) => {
+    const values = Object.entries(f.values).filter(([k]) => k in labels)
+      .map(([k, v]) => `${labels[k]} ${v}`);
+    return `• ${f.about}${values.length ? `: ${values.join(" · ")}` : ""}`;
+  }).join("\n");
+}
 
 export async function runAgent(question: string, scope: AgentScope, deps: { model: ModelFn; tools?: Tool[]; run?: Run }): Promise<AgentAnswer> {
   const tools = [...(deps.tools ?? (scope.kind === "shop" ? SHOP_TOOLS : DATASET_TOOLS)), CANNOT_ANSWER];
@@ -225,9 +245,19 @@ export async function runAgent(question: string, scope: AgentScope, deps: { mode
       }
     }
     contents.push({ role: "user", parts: responses });
+    if (scope.kind === "shop" && allFacts.facts.length > 0) {
+      return { answer: renderShopFacts(allFacts), source: "facts", tools: traces, model };
+    }
   }
 
-  let check = checkDraft(text, allFacts);
+  // Enforce grounding even when the provider ignores forced function calling.
+  const checkAnswer = (draft: string) => {
+    const check = checkDraft(draft, allFacts);
+    const usedFact = allFacts.facts.some((f) => Object.keys(f.values).some((k) => draft.includes(`{${f.id}.${k}}`)));
+    if (!usedFact) { check.ok = false; check.issues.push("answer must reference a fact returned by a tool"); }
+    return check;
+  };
+  let check = checkAnswer(text);
   deps.run?.note("check answer", check.ok ? "ผ่าน: ใช้แต่ช่องว่าง" : `ไม่ผ่าน: ${check.issues.join("; ")}`);
   if (!check.ok && text) {
     contents.push({ role: "model", parts: [{ text }] });
@@ -235,7 +265,7 @@ export async function runAgent(question: string, scope: AgentScope, deps: { mode
       `คำตอบถูกปฏิเสธ: ${check.issues.join("; ")} เขียนใหม่ตามกติกาบังคับ ใช้ placeholder เท่านั้น ไม่ต้องเรียกเครื่องมือเพิ่ม` }] });
     const content = await ask("AI rewrite", "NONE");
     text = content.parts.map((p) => p.text ?? "").join("").trim();
-    check = checkDraft(text, allFacts);
+    check = checkAnswer(text);
     deps.run?.note("check rewrite", check.ok ? "ผ่าน" : `ไม่ผ่าน: ${check.issues.join("; ")}`);
   }
 

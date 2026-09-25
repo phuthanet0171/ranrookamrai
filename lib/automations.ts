@@ -157,6 +157,8 @@ export type RuleResult = { rule_id: string; kind: RuleKind; status: "sent" | "sk
 export async function executeRule(rule: Rule, shop: Shop, sym: string,
   opts: { trigger: "schedule" | "manual"; dryRun?: boolean; now?: Date }): Promise<RuleResult> {
   const { date } = localNow(opts.now);
+  let claimed = false;
+  let deliveryStarted = false;
   const run = startRun("automation", opts.trigger, { title: `${RULE_KINDS[rule.kind].label} · ${shop.name}`, shopId: shop.id });
   const done = async (r: RuleResult) => {
     await run.finish(r.status === "failed" ? "failed" : "success", { output: { status: r.status, detail: r.detail, title: r.message?.title } });
@@ -170,15 +172,25 @@ export async function executeRule(rule: Rule, shop: Shop, sym: string,
   try {
     if (opts.trigger === "schedule") {
       const mine = await run.step("claim", () => rpc<boolean>("automation_claim", { p_rule: rule.id, p_date: date }), (x) => (x ? "ได้สิทธิ์รันของวันนี้" : "มีผู้รันไปแล้ว"));
-      if (!mine) return { rule_id: rule.id, kind: rule.kind, status: "skipped", detail: "วันนี้รันไปแล้ว" };
+      if (!mine) {
+        const skipped: RuleResult = { rule_id: rule.id, kind: rule.kind, status: "skipped", detail: "วันนี้รันไปแล้ว" };
+        await run.finish("success", { output: { status: skipped.status, detail: skipped.detail } });
+        return skipped;
+      }
+      claimed = true;
     }
     const { message, reason } = await run.step("check", () => buildMessage(rule, shop, sym, date, run), (x) => x.reason);
     if (!message) return await done({ rule_id: rule.id, kind: rule.kind, status: "skipped", detail: reason });
     if (opts.dryRun) return await done({ rule_id: rule.id, kind: rule.kind, status: "preview", detail: "ตัวอย่าง (ไม่ได้ส่งจริง)", message });
+    deliveryStarted = true;
     const sent = await run.step(`send ${rule.channel}`, () => deliver(rule, message), (x) => x);
     return await done({ rule_id: rule.id, kind: rule.kind, status: "sent", detail: sent, message });
   } catch (e) {
+    // A calculation failure is safe to retry. A send failure is ambiguous: the recipient
+    // may already have received it, so keep today's claim and surface the failure.
+    if (claimed && !deliveryStarted) {
+      await rpc<boolean>("automation_release_unstarted", { p_rule: rule.id, p_date: date }).catch(() => undefined);
+    }
     return await done({ rule_id: rule.id, kind: rule.kind, status: "failed", detail: (e as Error).message });
   }
 }
-

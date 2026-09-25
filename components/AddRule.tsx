@@ -7,7 +7,19 @@ export default function AddRule({ shopId, kinds }: { shopId: string; kinds: { ki
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   return (
-    <div className="template-grid">
+    <div>
+      <button className="btn btn-primary" type="button" disabled={busy !== null}
+        onClick={async () => {
+          setBusy("recommended"); setErr(null);
+          try {
+            const res = await fetch("/api/automations", { method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ shop_id: shopId, kind: "recommended" }) });
+            if (!res.ok) throw new Error((await res.json()).error ?? "เพิ่มกฎไม่สำเร็จ");
+            router.refresh();
+          } catch (e) { setErr((e as Error).message); }
+          finally { setBusy(null); }
+        }}>เพิ่มกฎแนะนำที่ยังไม่มี</button>
+    <div className="template-grid" style={{ marginTop: 12 }}>
       {kinds.map((k) => (
         <button key={k.kind} type="button" className="template" disabled={busy !== null}
           onClick={async () => {
@@ -22,6 +34,7 @@ export default function AddRule({ shopId, kinds }: { shopId: string; kinds: { ki
         </button>
       ))}
       {err && <div className="alert alert-err"><div>{err}</div></div>}
+    </div>
     </div>
   );
 }

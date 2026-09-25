@@ -80,7 +80,7 @@ export default function RuleCard({ rule, meta, canEdit }: { rule: Rule; meta: Me
             <select id={`c-${rule.id}`} className="input" value={channel} onChange={(e) => setChannel(e.target.value as Rule["channel"])}>
               <option value="web">แจ้งเตือนในเว็บ</option>
               <option value="line">LINE (ทุกคนที่เชื่อมกับร้าน)</option>
-              <option value="discord">Discord</option>
+              <option value="discord">Discord (ส่วนเสริม · ระยะถัดไป)</option>
             </select>
           </div>
           {rule.kind === "money_gap" && (

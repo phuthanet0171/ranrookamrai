@@ -9,8 +9,8 @@
 import { runAgent } from "@/lib/agent";
 import { addDays, currencySymbol } from "@/lib/format";
 import { gemini, textOf } from "@/lib/gemini";
-import { dayText, HELP, lineConfigured, NOT_LINKED, profileName, reply, text, confirmCard, verifySignature, type LineMessage } from "@/lib/line";
-import { AI_PARSE_SCHEMA, aiParsePrompt, checkAiParse, isEmpty, looksLikeQuestion, parseRecord, toEntry, type Parsed } from "@/lib/lineparse";
+import { dayText, HELP, lineConfigured, NOT_LINKED, profileName, reply, text, confirmCard, correctionCard, verifySignature, type LineMessage } from "@/lib/line";
+import { AI_PARSE_SCHEMA, aiParsePrompt, checkAiParse, isEmpty, looksLikeQuestion, looksLikeCorrection, parseCorrection, parseRecord, toEntry, type Parsed } from "@/lib/lineparse";
 import { hit } from "@/lib/ratelimit";
 import { startRun, type Run } from "@/lib/runs";
 import { daySummary, getMenu, isUuid, listShops, todayBangkok, type Shop } from "@/lib/shop";
@@ -81,9 +81,28 @@ async function onText(userId: string, msg: string, run: Run): Promise<LineMessag
   const m = msg.trim();
 
   if (/^(วิธีใช้|ช่วยเหลือ|ช่วยด้วย|help|เมนู|\?)$/i.test(m)) return [text(HELP)];
+  if (m === "จดยอด") return [text("พิมพ์หลายเมนูในข้อความเดียวได้ เช่น ขายมันไก่ 40, ชาเย็น 20 สด 2500 โอน 1500 ค่าไก่ 800 แล้วตรวจการ์ดก่อนกดยืนยัน")];
+  if (m === "แก้ยอด") return [text("พิมพ์ชื่อเมนูและจำนวนที่ต้องการลด เช่น ลบข้าวมันไก่ 1 หรือ ลบเมื่อวาน ข้าวมันไก่ 2 แล้วกดยืนยันในการ์ด")];
   if (/^(ยืนยัน|ยกเลิก)$/.test(m)) return [];                          // echo of a button tap
   if (/^(สรุป|สรุปวันนี้|ยอดวันนี้|วันนี้)$/.test(m)) {
     return [text(dayText(shop.name, await daySummary(shop.id, today), sym, "📊 สรุปวันนี้"))];
+  }
+
+  if (looksLikeCorrection(m)) {
+    const menu = await getMenu(shop.id);
+    const correction = parseCorrection(m, menu);
+    if (!correction) return [text("แก้ยอดได้ทีละเมนู พิมพ์เช่น ลบข้าวมันไก่ 1 หรือ ลบเมื่อวานข้าวมันไก่ 1 ใช้ชื่อเมนู/ชื่อเรียกในตั้งค่า")];
+    const date = correction.day === "yesterday" ? addDays(today, -1) : today;
+    const preview = await rpc<{ entry_id: string; quantity: number; remaining: number; amount_before: number; amount_after: number } | null>(
+      "line_correction_preview", { p_user: userId, p_date: date, p_menu: correction.menu_item_id, p_quantity: correction.quantity });
+    if (!preview) return [text(`ไม่พบรายการ ${correction.name} ที่จดในวันนั้นและมีจำนวนพอให้ลบ กรุณาตรวจยอดเดิมก่อน`)];
+    const [draft] = await insert<{ id: string }>("entry_drafts", [{
+      shop_id: shop.id, author: "LINE", raw_text: m.slice(0, 1000), line_user_id: userId, entry_date: date,
+      parsed: { kind: "decrement", entry_id: preview.entry_id, menu_item_id: correction.menu_item_id,
+        quantity: correction.quantity, expected_quantity: preview.quantity },
+    }]);
+    return [correctionCard(correction.name, correction.unit, correction.quantity, preview.quantity, preview.remaining,
+      preview.amount_before, preview.amount_after, draft.id, date, sym)];
   }
 
   if (looksLikeQuestion(m)) {
@@ -93,6 +112,7 @@ async function onText(userId: string, msg: string, run: Run): Promise<LineMessag
   }
 
   const parsed = await readRecord(m, shop, run);
+  if (parsed.unknown.length) return [text(`ยังอ่านบางรายการไม่ชัด: ${parsed.unknown.join(", ").slice(0, 300)}\nยังไม่บันทึกอะไร กรุณาแก้ชื่อเมนูหรือแยกรายการด้วยช่องว่าง/จุลภาค แล้วส่งใหม่`)];
   if (isEmpty(parsed)) {
     return [text(`อ่านไม่ออกว่าขายอะไรไปบ้าง${parsed.unknown.length ? ` (ไม่รู้จัก: ${parsed.unknown.join(", ")})` : ""}\nพิมพ์ชื่อเมนูตามด้วยจำนวน เช่น มันไก่ 40 ชาเย็น 20\nหรือเพิ่มชื่อเรียกอื่นของเมนูในหน้าตั้งค่า`)];
   }
@@ -116,9 +136,9 @@ async function onPostback(userId: string, data: string, run: Run): Promise<LineM
   if (action !== "confirm") return [];
   const entry = await run.step("confirm", () => rpc<string | null>("line_draft_confirm", { p_draft: id, p_user: userId }), (x) => (x ? "บันทึกแล้ว" : "บันทึกไปแล้วหรือหมดอายุ"));
   if (!entry) return [text("รายการนี้บันทึกไปแล้ว ยกเลิกไปแล้ว หรือหมดอายุ (เกิน 1 วัน)")];
-  const [d] = await select<{ entry_date: string }>("entry_drafts", `id=eq.${id}&select=entry_date`);
+  const [d] = await select<{ entry_date: string; parsed: { kind?: string } }>("entry_drafts", `id=eq.${id}&select=entry_date,parsed`);
   const day = await daySummary(shop.id, d?.entry_date ?? todayBangkok());
-  return [text(dayText(shop.name, day, currencySymbol(shop.currency), "✅ บันทึกแล้ว"))];
+  return [text(dayText(shop.name, day, currencySymbol(shop.currency), d?.parsed?.kind === "decrement" ? "✅ แก้ยอดแล้ว" : "✅ บันทึกแล้ว"))];
 }
 
 export async function POST(req: Request) {

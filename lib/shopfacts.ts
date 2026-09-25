@@ -78,8 +78,8 @@ export function shopPeriodFacts(p: string, s: PeriodSummary, sym: string): FactS
 
 export function shopForecastFacts(p: string, f: Forecast): FactSet {
   const facts: Fact[] = [{
-    id: `${p}_fc`, about: "การคาดการณ์ ใช้วันเดียวกันในสัปดาห์ของ 4 สัปดาห์ล่าสุดที่ร้านเปิด",
-    values: { date: dateWithDay(f.date), weeks: `${count(f.samples)} สัปดาห์` },
+    id: `${p}_fc`, about: "การคาดการณ์จาก SQL: เฉลี่ยวันเดียวกันใน 4 สัปดาห์ที่มีการขาย ปัดจำนวนเต็ม ไม่บวกเผื่อ ต้องมีอย่างน้อย 2 ตัวอย่าง",
+    values: { date: dateWithDay(f.date), weeks: `${count(f.samples)} สัปดาห์`, status: f.items.length ? "มีข้อมูลเพียงพอสำหรับคำแนะนำเบื้องต้น" : "ข้อมูลไม่พอสำหรับคาดการณ์เมนูที่ขายได้" },
   }];
   f.items.slice(0, 10).forEach((x, i) => facts.push({
     id: `${p}_f${i + 1}`, about: `ควรเตรียมเมนูนี้ประมาณเท่าไหร่ (low–high = ช่วงที่เคยขายได้)`,

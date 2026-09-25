@@ -18,6 +18,7 @@ export type Parsed = {
   unknown: string[];                 // "label number" pairs the rules could not place
   by: "rules" | "ai";
 };
+export type Correction = { day: "today" | "yesterday"; menu_item_id: string; name: string; unit: string; quantity: number };
 
 const THAI_DIGITS = "๐๑๒๓๔๕๖๗๘๙";
 const UNITS = ["จาน", "แก้ว", "ถ้วย", "ชาม", "ที่", "ชิ้น", "กล่อง", "ถุง", "ขวด", "ไม้", "ลูก", "อัน", "ห่อ", "ชุด", "บาท", "฿", "x", "×", "=", ":"];
@@ -53,6 +54,7 @@ const squash = (s: string) => s.replace(/\s+/g, "").toLowerCase();
 
 function cleanLabel(raw: string): string {
   let s = raw.replace(/[,\n;/+]+/g, " ").trim();
+  s = s.replace(/^(?:(?:และ|กับ|ขาย|จด|เพิ่ม|บวก|อีก|จำนวน|รายการ)\s*)+/g, "").trim();
   let changed = true;
   while (changed) {                                         // "ข้าวมันไก่ x", "40 จาน ชาเย็น" leftovers
     changed = false;
@@ -82,8 +84,21 @@ export function matchMenu(label: string, menu: MenuItem[], exactOnly = false): M
 export const looksLikeQuestion = (text: string) =>
   /[?？]|ไหม|มั้ย|หรือเปล่า|เท่าไ|อะไร|กี่|ยังไง|อย่างไร|ไหน|ทำไม|ควร|แนะนำ/.test(text) || !/[\d๐-๙]/.test(text);
 
-export function parseRecord(text: string, menu: MenuItem[]): Parsed {
+/** A correction targets a recorded sale. Never pass it to the ordinary positive-sale parser or AI. */
+export function parseCorrection(text: string, menu: MenuItem[]): Correction | null {
   const t = normalize(text);
+  const m = t.match(/^(?:แก้ยอด\s*)?(?:ลบ|ลด|หัก)\s*(?:ยอด\s*)?(?:(เมื่อวาน|วันนี้)\s*)?(.+?)\s+(\d+(?:\.\d+)?)\s*(?:จาน|แก้ว|ถ้วย|ชาม|ที่|ชิ้น|กล่อง|ถุง|ขวด|ไม้|ลูก|อัน|ห่อ|ชุด)?$/);
+  if (!m) return null;
+  const item = matchMenu(m[2], menu, true);
+  const quantity = Number(m[3]);
+  if (!item || !Number.isFinite(quantity) || quantity <= 0 || quantity > 9999) return null;
+  return { day: m[1] === "เมื่อวาน" ? "yesterday" : "today", menu_item_id: item.id, name: item.name, unit: item.unit, quantity };
+}
+
+export const looksLikeCorrection = (text: string) => /^(?:แก้ยอด\s*)?(?:ลบ|ลด|หัก)/.test(normalize(text));
+
+export function parseRecord(text: string, menu: MenuItem[]): Parsed {
+  const t = normalize(text).replace(/[,;|+]+/g, " ").replace(/\s+(?:และ|กับ)\s+/g, " ");
   const out: Parsed = { day: /เมื่อวาน/.test(t) ? "yesterday" : "today", sales: [], cash: null, transfer: null, expenses: [], unknown: [], by: "rules" };
   const body = t.replace(/(ของ)?เมื่อวาน(นี้)?|(ของ)?วันนี้|ยอด(ขาย)?|จด(ยอด)?/g, " ");
   const sales = new Map<string, ParsedSale>();
@@ -151,7 +166,7 @@ export function aiParsePrompt(text: string, menu: MenuItem[]): { system: string;
       "คุณอ่านข้อความจดยอดขายของร้านอาหารไทย แล้วแปลงเป็นข้อมูล",
       "sales.menu ต้องเป็นชื่อเมนูจากรายการที่ให้มาเท่านั้น สะกดตรงตัว ถ้าไม่แน่ใจว่าเป็นเมนูไหน ให้ใส่ข้อความนั้นใน unknown",
       "ตัวเลขทุกตัวต้องเป็นตัวเลขที่อยู่ในข้อความ ห้ามคำนวณ ห้ามเดา ห้ามรวมเอง",
-      "cash = เงินสดที่นับได้, transfer = เงินโอน/พร้อมเพย์/QR, expenses = รายจ่าย เช่น ค่าไก่ ซื้อผัก ค่าแก๊ส",
+      "cash = เงินสดจากยอดขายที่นับได้ (ไม่รวมเงินทอนตั้งต้น), transfer = เงินโอน/พร้อมเพย์/QR, expenses = รายจ่าย เช่น ค่าไก่ ซื้อผัก ค่าแก๊ส",
       "day = yesterday เฉพาะเมื่อข้อความบอกว่าเป็นของเมื่อวาน",
     ].join("\n"),
     user: `เมนูของร้าน:\n${list}\n\nข้อความ:\n${text}`,
@@ -164,7 +179,7 @@ export function checkAiParse(raw: unknown, text: string, menu: MenuItem[]): Pars
   const r = raw as Record<string, unknown>;
   const typed = numbersIn(text);
   const ok = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0 && typed.has(v);
-  const out: Parsed = { day: r.day === "yesterday" ? "yesterday" : "today", sales: [], cash: null, transfer: null, expenses: [], unknown: [], by: "ai" };
+  const out: Parsed = { day: /เมื่อวาน/.test(normalize(text)) ? "yesterday" : "today", sales: [], cash: null, transfer: null, expenses: [], unknown: [], by: "ai" };
   const byName = new Map(menu.filter((m) => m.active).map((m) => [squash(m.name), m]));
   const sales = new Map<string, ParsedSale>();
   for (const s of Array.isArray(r.sales) ? r.sales as Record<string, unknown>[] : []) {

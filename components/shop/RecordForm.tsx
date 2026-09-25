@@ -85,8 +85,9 @@ export default function RecordForm({ shopId, date, menu, sym, canEdit }: {
           <summary><h2 className="step-title">เงินที่รับ <small className="muted">(ไม่บังคับ · ใช้เช็กเงินขาด)</small></h2></summary>
           <div className="form-grid" style={{ marginTop: 12 }}>
             <div className="field">
-              <label htmlFor="cash">เงินสดที่นับได้</label>
+              <label htmlFor="cash">เงินสดจากยอดขาย (ไม่รวมเงินทอนตั้งต้น)</label>
               <input id="cash" className="input input-lg" inputMode="decimal" value={cash} placeholder={`${sym} 0`} onChange={(e) => setCash(e.target.value)} />
+              <small className="muted">ถ้าหยิบเงินจากยอดขายไปจ่ายของ ให้กรอกยอดก่อนหยิบ และบันทึกค่าใช้จ่ายแยกด้านล่าง</small>
             </div>
             <div className="field">
               <label htmlFor="transfer">เงินโอน / พร้อมเพย์</label>

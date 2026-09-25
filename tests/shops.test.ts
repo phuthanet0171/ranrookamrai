@@ -139,3 +139,20 @@ describe("demo shop, period summary and forecast", () => {
     expect(gaps).toBe(1);
   });
 });
+
+describe("deterministic forecast contract", () => {
+  it("rounds the same-weekday mean, ignores other weekdays and voided entries, requires two samples", async () => {
+    const s = await newShop("forecast contract");
+    const forecast = () => one<{ samples: number; items: { expected: number; low: number; high: number }[] }>("select shop_forecast($1, '2026-09-25') x", [s.id]);
+    await record(s.id, "2026-09-18", { sales: [{ menu_item_id: s.menu["ข้าวมันไก่"], quantity: 43 }] });
+    expect((await forecast()).items).toEqual([]);
+    for (const [date, quantity] of [["2026-09-11", 38], ["2026-09-04", 46], ["2026-08-28", 41], ["2026-09-24", 999]] as const) {
+      await record(s.id, date, { sales: [{ menu_item_id: s.menu["ข้าวมันไก่"], quantity }] });
+    }
+    const wrong = await record(s.id, "2026-09-18", { sales: [{ menu_item_id: s.menu["ข้าวมันไก่"], quantity: 999 }] });
+    await db.query("select shop_void_entry($1, $2)", [s.id, wrong]);
+    const first = await forecast();
+    expect(first).toMatchObject({ samples: 4, items: [{ expected: 42, low: 38, high: 46 }] });
+    expect(await forecast()).toEqual(first);
+  });
+});

@@ -9,7 +9,7 @@ import type { DaySummary, Forecast, PeriodSummary, Shop } from "@/lib/shop";
 
 const ROOT = path.join(__dirname, "..", "..");
 const MIGRATIONS = ["001_schema.sql", "002_analytics.sql", "003_features.sql", "004_import_batches.sql",
-  "005_shops.sql", "006_automation_runs.sql", "007_automations.sql"];
+  "005_shops.sql", "006_automation_runs.sql", "007_automations.sql", "011_automation_retry.sql"];
 let db: PGlite;
 let shopId: string;
 const one = async <T>(sql: string, params: unknown[] = []) => (await db.query<{ x: T }>(sql, params)).rows[0].x;
@@ -65,6 +65,22 @@ describe("automation_claim prevents double sends", () => {
   it("rejects a Discord rule without a real webhook URL (no requests to arbitrary hosts)", async () => {
     await expect(db.query(`insert into automation_rules (shop_id, kind, run_at, channel, target)
       values ($1, 'money_gap', '22:00', 'discord', 'http://169.254.169.254/latest')`, [shopId])).rejects.toThrow();
+  });
+  it("releases a claimed rule only for its claim date so an unsent calculation can retry", async () => {
+    const rule = await one<string>("select id x from automation_rules where kind = 'weekly_summary'");
+    expect(await one<boolean>("select automation_claim($1, '2026-09-28') x", [rule])).toBe(true);
+    expect(await one<boolean>("select automation_release_unstarted($1, '2026-09-27') x", [rule])).toBe(false);
+    expect(await one<boolean>("select automation_release_unstarted($1, '2026-09-28') x", [rule])).toBe(true);
+    expect(await one<boolean>("select automation_claim($1, '2026-09-28') x", [rule])).toBe(true);
+  });
+});
+
+describe("recommended automation setup", () => {
+  it("adds only missing rules and is safe to click again", async () => {
+    const fresh = await one<string>("insert into shops (name) values ('ร้านเปิดกฎ') returning id x");
+    expect(await one<number>("select automation_seed_defaults($1) x", [fresh])).toBe(4);
+    expect(await one<number>("select automation_seed_defaults($1) x", [fresh])).toBe(0);
+    expect(await one<number>("select count(*)::int x from automation_rules where shop_id = $1 and channel = 'web'", [fresh])).toBe(4);
   });
 });
 

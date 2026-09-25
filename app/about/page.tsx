@@ -3,12 +3,12 @@ import type { Metadata } from "next";
 export const metadata: Metadata = { title: "วิธีการทำงาน" };
 
 const FLOW = [
-  { tag: "Python · pandas", title: "Clean ข้อมูล", text: "ลบข้อมูลซ้ำ แก้วันที่ผิด ตัดราคาที่ผิดปกติ และบันทึกทุกกฎลงรายงานการ clean" },
-  { tag: "PostgreSQL · Supabase", title: "เก็บในฐานข้อมูล", text: "โหลดด้วย COPY สร้าง materialized view และเปิด RLS กันการอ่านจาก key สาธารณะ" },
-  { tag: "SQL", title: "คำนวณและหาสาเหตุ", text: "KPI, เทียบช่วงเวลา, window function และหาว่าส่วนไหนทำให้รายได้เปลี่ยนกี่ %" },
-  { tag: "Next.js", title: "Dashboard", text: "กราฟ ตารางสำรอง นำเข้า CSV/Excel และดาวน์โหลดข้อมูลไปเปิดใน Excel" },
-  { tag: "Gemini", title: "สรุปด้วย AI", text: "AI เรียบเรียงข้อความด้วยช่องว่าง ระบบเป็นผู้เติมตัวเลขและคำว่าเพิ่ม/ลดจากผลของ SQL" },
-  { tag: "n8n", title: "ส่งรายงานอัตโนมัติ", text: "ทุกเช้า 08:00 ส่งอีเมล Discord Telegram บันทึกลง Google Sheets และแจ้งเตือนเมื่อยอดตก" },
+  { tag: "Web / LINE", title: "จดยอดร้าน", text: "เมนู ราคา ต้นทุน ยอดรายวัน รายจ่าย เงินสดและเงินโอน; LINE ต้องกดยืนยันก่อนบันทึก" },
+  { tag: "Supabase", title: "เก็บข้อมูล", text: "เก็บต้นทุน ณ วันที่ขายและประวัติการยกเลิก" },
+  { tag: "SQL", title: "คำนวณตัวเลข", text: "ยอดขาย กำไรโดยประมาณ เงินขาด/เกิน และข้อมูลย้อนหลัง 7 วัน" },
+  { tag: "Gemini", title: "ถาม AI", text: "เรียกเครื่องมือ SQL ที่กำหนดไว้ แล้วอธิบายด้วย placeholder จากข้อเท็จจริง" },
+  { tag: "TypeScript", title: "ตรวจคำตอบ", text: "ตรวจ placeholder ก่อนเติมตัวเลข หากไม่ผ่านใช้ข้อมูลจากระบบแทน" },
+  { tag: "Scheduler / LINE", title: "แจ้งเตือน", text: "สรุปตอนเช้าและเตือนเมื่อยังไม่จดยอด ผ่าน LINE หรือเว็บ" },
 ];
 
 export default function AboutPage() {
@@ -18,7 +18,7 @@ export default function AboutPage() {
         <div>
           <span className="eyebrow">Data Analytics + AI Automation</span>
           <h1>ระบบนี้ทำงานอย่างไร</h1>
-          <p>จากข้อมูลดิบ → วิเคราะห์ → สรุปเป็นภาษาคน → ส่งถึงผู้จัดการอัตโนมัติ โดยไม่มีค่าใช้จ่ายรายเดือน</p>
+          <p>จดยอด → คำนวณกำไรโดยประมาณ → ดูสรุป 7 วัน → ถาม AI และรับแจ้งเตือน</p>
         </div>
       </div>
 
@@ -44,7 +44,7 @@ export default function AboutPage() {
         </section>
 
         <section className="card prose">
-          <h2>คำถามทางธุรกิจที่ตอบได้</h2>
+          <h2>ส่วนเสริม · ระยะถัดไป</h2><p>การวิเคราะห์ไฟล์นำเข้า หลายร้าน Power BI และช่องทางเพิ่มเติมไม่ใช่ core MVP</p>
           <ul>
             <li>ยอดขายช่วงนี้ดีขึ้นหรือแย่ลง (รายได้ คำสั่งซื้อ ยอดเฉลี่ย ลูกค้า การส่งของตรงเวลา)</li>
             <li>ถ้ายอดเปลี่ยน เปลี่ยนเพราะหมวดสินค้า สาขา/พื้นที่ หรือช่วงเวลาไหน และคิดเป็นกี่ %</li>

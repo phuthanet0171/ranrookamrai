@@ -1,7 +1,7 @@
 // LINE bot: reading messages, the AI guard on reading, webhook signatures, and the AI morning message.
 import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { checkAiParse, looksLikeQuestion, parseRecord, salesTotal, toEntry } from "@/lib/lineparse";
+import { checkAiParse, looksLikeQuestion, looksLikeCorrection, parseCorrection, parseRecord, salesTotal, toEntry } from "@/lib/lineparse";
 import { confirmCard, verifySignature } from "@/lib/line";
 import { aiMorningMessage } from "@/lib/morning";
 import type { DaySummary, Forecast, MenuItem, Shop, ShopTotals } from "@/lib/shop";
@@ -129,5 +129,31 @@ describe("aiMorningMessage", () => {
   it("falls back when Gemini is down", async () => {
     const r = await aiMorningMessage(SHOP, "฿", Y, FC, { model: async () => { throw new Error("503"); } });
     expect(r.source).toBe("template");
+  });
+});
+
+describe("LINE parser date grounding", () => {
+  it("uses the owner's date wording instead of an invented AI day", () => {
+    expect(checkAiParse({ day: "yesterday", sales: [] }, "มันไก่ 40", MENU)?.day).toBe("today");
+    expect(checkAiParse({ day: "today", sales: [] }, "เมื่อวาน มันไก่ 40", MENU)?.day).toBe("yesterday");
+  });
+});
+
+describe("LINE conversational entry and correction", () => {
+  it("accepts several items and payments in one natural message", () => {
+    const p = parseRecord("ขายมันไก่ 40, ชาเย็น 20 และไก่ทอด 12; สด 2500 โอน 1500 ค่าไก่ 800", MENU);
+    expect(p.unknown).toEqual([]);
+    expect(p.sales.map((s) => [s.name, s.quantity])).toEqual([
+      ["ข้าวมันไก่", 40], ["ชาเย็น", 20], ["ข้าวไก่ทอด", 12],
+    ]);
+    expect(p.cash).toBe(2500);
+    expect(p.transfer).toBe(1500);
+    expect(p.expenses[0].amount).toBe(800);
+  });
+  it("understands one explicit decrement, never treats a malformed decrement as a sale", () => {
+    expect(parseCorrection("ลบข้าวมันไก่ ๑", MENU)).toMatchObject({ menu_item_id: "m1", quantity: 1, day: "today" });
+    expect(parseCorrection("ลบเมื่อวาน ข้าวมันไก่ 2 จาน", MENU)).toMatchObject({ menu_item_id: "m1", quantity: 2, day: "yesterday" });
+    expect(looksLikeCorrection("ลบข้าวมันไก่ 1 ชาเย็น 2")).toBe(true);
+    expect(parseCorrection("ลบข้าวมันไก่ 1 ชาเย็น 2", MENU)).toBeNull();
   });
 });

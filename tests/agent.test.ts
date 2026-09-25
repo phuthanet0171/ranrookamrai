@@ -4,10 +4,12 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { describe, expect, it } from "vitest";
-import { runAgent, type AgentScope, type ModelFn, type Tool } from "@/lib/agent";
+import { runAgent, SHOP_TOOLS, type AgentScope, type ModelFn, type Tool } from "@/lib/agent";
 import type { Content } from "@/lib/gemini";
 
 const scope: AgentScope = { kind: "shop", shopId: "00000000-0000-0000-0000-000000000001", name: "ร้านทดสอบ", sym: "฿", today: "2026-09-25" };
+const proseScope: AgentScope = { kind: "dataset", bounds: { min_date: "2026-01-01", max_date: "2026-09-25", sim_date: null },
+  ctx: {}, today: "2026-09-25", name: "ชุดทดสอบ" };
 
 const fakeTool: Tool = {
   name: "shop_day",
@@ -37,7 +39,7 @@ describe("runAgent", () => {
       [{ functionCall: { name: "shop_day", args: { date: "2026-09-24" } } }],
       [{ text: "เมื่อวานยอดขาย {t1_day.revenue} {t1_day.dir} {t1_day.pct}\n• {t1_day.gap}" }],
     ]);
-    const a = await runAgent("เมื่อวานเป็นยังไง", scope, { model, tools: [fakeTool] });
+    const a = await runAgent("เมื่อวานเป็นยังไง", proseScope, { model, tools: [fakeTool] });
     expect(a.source).toBe("ai");
     expect(a.answer).toBe("เมื่อวานยอดขาย ฿ 2,600 เพิ่มขึ้น 8.3%\n• เงินขาด ฿ 100");
     expect(a.tools).toMatchObject([{ name: "shop_day", ok: true, facts: 1 }]);
@@ -52,7 +54,7 @@ describe("runAgent", () => {
       [{ text: "เมื่อวานขายได้ ฿ 9,999 เพิ่มขึ้น" }],          // invents a number + a direction word
       [{ text: "ขายได้ 9,999 บาท" }],                          // still breaks the rules
     ]);
-    const a = await runAgent("เมื่อวานเป็นยังไง", scope, { model, tools: [fakeTool] });
+    const a = await runAgent("เมื่อวานเป็นยังไง", proseScope, { model, tools: [fakeTool] });
     expect(a.source).toBe("facts");
     expect(a.answer).not.toContain("9,999");
     expect(a.answer).toContain("฿ 2,600");
@@ -65,7 +67,7 @@ describe("runAgent", () => {
       [{ text: "ขายได้ 2,600 บาท" }],
       [{ text: "ขายได้ {t1_day.revenue}" }],
     ]);
-    const a = await runAgent("ขายได้เท่าไหร่", scope, { model, tools: [fakeTool] });
+    const a = await runAgent("ขายได้เท่าไหร่", proseScope, { model, tools: [fakeTool] });
     expect(a).toMatchObject({ source: "ai", answer: "ขายได้ ฿ 2,600" });
   });
 
@@ -74,7 +76,7 @@ describe("runAgent", () => {
       [{ functionCall: { name: "drop_tables", args: {} } }, { functionCall: { name: "shop_day", args: { date: "2030-01-01" } } }],
       [{ text: "ตอบไม่ได้ ลองถามเรื่องยอดขายของวันที่ผ่านมาแล้ว" }],
     ]);
-    const a = await runAgent("ปี 2030 ขายได้เท่าไหร่", scope, { model, tools: [fakeTool] });
+    const a = await runAgent("ปี 2030 ขายได้เท่าไหร่", proseScope, { model, tools: [fakeTool] });
     expect(a.tools.map((t) => [t.name, t.ok])).toEqual([["drop_tables", false], ["shop_day", false]]);
     expect(a.tools[1].error).toMatch(/อนาคต/);
     expect(JSON.stringify(model.calls[1])).toContain("ไม่มีเครื่องมือชื่อ drop_tables");
@@ -83,7 +85,7 @@ describe("runAgent", () => {
   it("stops asking for tools after the last round", async () => {
     const loop = [{ functionCall: { name: "shop_day", args: { date: "2026-09-24" } } }];
     const model = scripted([loop, loop, loop, [{ text: "ยอดขาย {t1_day.revenue}" }]]);
-    const a = await runAgent("วนไปเรื่อย ๆ", scope, { model, tools: [fakeTool] });
+    const a = await runAgent("วนไปเรื่อย ๆ", proseScope, { model, tools: [fakeTool] });
     expect(model.calls).toHaveLength(4);
     const last = model.calls[3] as { toolConfig: { functionCallingConfig: { mode: string } } };
     expect(last.toolConfig.functionCallingConfig.mode).toBe("NONE");
@@ -131,5 +133,29 @@ describe("renderDraft grammar", () => {
     const { renderDraft } = await import("@/lib/factset");
     const set = { lang: "th" as const, facts: [{ id: "p", about: "", values: { span: "4 สัปดาห์" } }] };
     expect(renderDraft("จากข้อมูล {p.span} สัปดาห์ล่าสุด", set)).toBe("จากข้อมูล 4 สัปดาห์ล่าสุด");
+  });
+});
+
+describe("MVP grounding", () => {
+  it("rejects prose when the provider skips tools, even without digits", async () => {
+    const model = scripted([[{ text: "ร้านมีกำไรแน่นอน" }], [{ text: "ร้านมีกำไรแน่นอน" }]]);
+    expect((await runAgent("กำไรเป็นอย่างไร", scope, { model, tools: [fakeTool] })).source).toBe("none");
+  });
+  it("falls back to facts when prose does not cite tool output", async () => {
+    const model = scripted([
+      [{ functionCall: { name: "shop_day", args: { date: "2026-09-24" } } }],
+      [{ text: "ร้านมีกำไรแน่นอน" }], [{ text: "ร้านมีกำไรแน่นอน" }],
+    ]);
+    const result = await runAgent("กำไรเป็นอย่างไร", scope, { model, tools: [fakeTool] });
+    expect(result.source).toBe("facts");
+    expect(result.answer).toContain("ยอดขาย ฿ 2,600");
+    expect(result.answer).not.toContain("ร้านมีกำไรแน่นอน");
+    expect(model.calls).toHaveLength(1);
+  });
+  it("rejects invalid forecast dates before querying SQL", async () => {
+    const tool = SHOP_TOOLS.find((t) => t.name === "shop_forecast")!;
+    for (const date of ["2026-02-30", "2026-09-24", "2026-10-10"]) {
+      await expect(tool.run({ date }, { scope, prefix: "t1" })).rejects.toThrow();
+    }
   });
 });

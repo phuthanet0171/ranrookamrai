@@ -27,7 +27,7 @@ export default async function Home({ searchParams }: { searchParams: SP }) {
     return (
       <>
         <div className="hero">
-          <h1>จดยอดวันละครั้ง<br />รู้กำไร รู้เงินขาด รู้ว่าพรุ่งนี้ควรเตรียมเท่าไหร่</h1>
+          <h1>จดยอดวันละครั้ง<br />ดูกำไรโดยประมาณและเงินขาด/เกิน</h1>
           <p>สำหรับร้านอาหาร ร้านเครื่องดื่ม และแผงลอยที่ไม่มีเครื่อง POS ใช้บนมือถือได้</p>
         </div>
         {owner ? (
@@ -60,7 +60,7 @@ export default async function Home({ searchParams }: { searchParams: SP }) {
   const recorded = day.entries.some((e) => !e.voided);
   // before today's entry the useful question is "what to prepare today"; after it, "tomorrow"
   const prepDate = recorded ? addDays(today, 1) : today;
-  const fc = await forecast(shop.id, prepDate);
+  const fc = await forecast(shop.id, prepDate).catch(() => null);
   const t = day.today;
   const y = yesterday.today;
   const maxDay = Math.max(1, ...week.daily.map((d) => d.revenue));
@@ -74,7 +74,7 @@ export default async function Home({ searchParams }: { searchParams: SP }) {
           <h1>{shop.name}</h1>
           <p className="muted">{dateWithDay(today)}</p>
         </div>
-        <ShopSwitcher shops={shops} current={shop.id} next="/" />
+        {shops.length > 1 && <ShopSwitcher shops={shops} current={shop.id} next="/" />}
       </div>
 
       {notes.length > 0 && (
@@ -123,10 +123,13 @@ export default async function Home({ searchParams }: { searchParams: SP }) {
         </section>
       )}
 
+      <p className="muted">กำไรโดยประมาณ = ยอดขายที่ทราบต้นทุน − ต้นทุนเมนู ยังไม่หักค่าแรง ค่าเช่าและรายจ่ายอื่น จึงไม่ใช่กำไรสุทธิ{t.gross_profit !== null && t.menus_without_cost > 0 ? ` · คิดจาก ${t.profit_coverage_pct ?? 0}% ของยอดขาย` : ""}</p>
+
       <div className="grid two home-grid">
-        <section className="card">
-          <div className="card-head"><h2>{recorded ? "พรุ่งนี้ควรเตรียม" : "วันนี้ควรเตรียม"}</h2></div>
-          {fc.items.length === 0 ? (
+        <details className="card">
+          <summary><strong>ส่วนเสริม: {recorded ? "พรุ่งนี้ควรเตรียม" : "วันนี้ควรเตรียม"}</strong></summary>
+          <p className="muted">เฉลี่ยวันเดียวกันใน 4 สัปดาห์ที่มีการขาย ต้องมีอย่างน้อย 2 ตัวอย่าง ปัดเป็นจำนวนเต็ม ไม่บวกเผื่อ ช่วงต่ำ–สูงคือยอดที่เคยขายได้ ไม่ใช่การรับประกัน</p>
+          {!fc ? <p className="muted">ยังโหลดคำแนะนำไม่ได้ ลองใหม่ภายหลัง</p> : fc.items.length === 0 ? (
             <p className="muted" style={{ margin: 0 }}>จดยอดให้ครบ 2 สัปดาห์ก่อน ระบบจะบอกได้ว่าควรเตรียมแต่ละเมนูประมาณเท่าไหร่</p>
           ) : (
             <ul className="prep">
@@ -139,7 +142,7 @@ export default async function Home({ searchParams }: { searchParams: SP }) {
               ))}
             </ul>
           )}
-        </section>
+        </details>
 
         <section className="card">
           <div className="card-head">

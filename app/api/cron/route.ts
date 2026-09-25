@@ -33,7 +33,8 @@ async function tick(req: Request) {
     if (!shop) continue;
     results.push(await executeRule(rule, shop, currencySymbol(shop.currency), { trigger: "schedule", now }));
   }
-  return Response.json({ now: localNow(now), due: due.length, results });
+  const failed = results.filter((r) => r.status === "failed").length;
+  return Response.json({ now: localNow(now), due: due.length, failed, results }, { status: failed ? 500 : 200 });
 }
 
 export const GET = tick;

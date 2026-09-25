@@ -62,6 +62,14 @@ export default async function AutomationsPage({ searchParams }: { searchParams: 
           </div>
         </div>
       )}
+      {cronReady && (
+        <div className="alert alert-warn">
+          <span aria-hidden="true">⏱️</span>
+          <div><strong>ตั้งค่าคีย์เรียกตามเวลาแล้ว</strong>
+            <p>กฎจะทำงานเองเมื่อ GitHub Actions, n8n หรือ Cron เรียกเว็บจริง ตรวจรอบล่าสุดที่ “ขั้นสูง → ประวัติการทำงาน” และลอง “ดูตัวอย่างข้อความ” ก่อนเปิดใช้งาน</p>
+          </div>
+        </div>
+      )}
 
       <div className="stack">
         {rules.length === 0 && <p className="muted">ยังไม่มีกฎ เลือกจากแม่แบบด้านล่าง</p>}

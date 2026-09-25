@@ -13,7 +13,7 @@ import { verifyText } from "@/lib/verify";
 import { setCurrency } from "@/lib/format";
 
 const ROOT = path.join(__dirname, "..", "..");
-const MIGRATIONS = ["001_schema.sql", "002_analytics.sql", "003_features.sql", "004_import_batches.sql", "005_shops.sql", "006_automation_runs.sql", "007_automations.sql", "008_production.sql", "009_line.sql"];
+const MIGRATIONS = ["001_schema.sql", "002_analytics.sql", "003_features.sql", "004_import_batches.sql", "005_shops.sql", "006_automation_runs.sql", "007_automations.sql", "008_production.sql", "009_line.sql", "010_line_corrections.sql", "011_automation_retry.sql"];
 const allText = (s: { headline: string; bullets: string[]; recommendation: string }) =>
   [s.headline, ...s.bullets, s.recommendation].join("\n");
 
@@ -247,16 +247,56 @@ describe("LINE bot: linking and confirming", () => {
   it("confirming a draft twice records it once, and only for the LINE user who wrote it", async () => {
     const db = await freshDb();
     const shop = await one<string>(db, "select shop_create_demo(7) x");
+    await db.query("insert into line_links (line_user_id, shop_id) values ('U1', $1)", [shop]);
     const menu = await one<string>(db, "select id x from menu_items where shop_id = $1 limit 1", [shop]);
     const draft = await one<string>(db, `insert into entry_drafts (shop_id, author, raw_text, parsed, line_user_id, entry_date)
       values ($1, 'LINE', 'มันไก่ 3', $2::jsonb, 'U1', current_date) returning id x`, [shop, JSON.stringify({ sales: [{ menu_item_id: menu, quantity: 3 }] })]);
     const before = await one<number>(db, "select count(*)::int x from day_entries where source = 'line'");
+    expect(await one<number>(db, "select count(*)::int x from day_entries where source = 'line'")).toBe(before);
     expect(await one<string | null>(db, "select line_draft_confirm($1, 'U2') x", [draft])).toBeNull();   // someone else
     expect(await one<string | null>(db, "select line_draft_confirm($1, 'U1') x", [draft])).not.toBeNull();
     expect(await one<string | null>(db, "select line_draft_confirm($1, 'U1') x", [draft])).toBeNull();   // double tap
     expect(await one<number>(db, "select count(*)::int x from day_entries where source = 'line'")).toBe(before + 1);
+    for (const status of ["cancelled", "expired"]) {
+      const blocked = await one<string>(db, `insert into entry_drafts (shop_id, author, raw_text, parsed, line_user_id, entry_date)
+        values ($1, 'LINE', 'test', $2::jsonb, 'U1', current_date) returning id x`, [shop, JSON.stringify({ sales: [{ menu_item_id: menu, quantity: 99 }] })]);
+      if (status === "cancelled") await db.query("update entry_drafts set status = 'cancelled' where id = $1", [blocked]);
+      else await db.query("update entry_drafts set created_at = now() - interval '2 days' where id = $1", [blocked]);
+      expect(await one<string | null>(db, "select line_draft_confirm($1, 'U1') x", [blocked])).toBeNull();
+    }
+    expect(await one<number>(db, "select count(*)::int x from day_entries where source = 'line'")).toBe(before + 1);
     // LINE is now a channel for automation rules
     await db.query("insert into automation_rules (shop_id, kind, run_at, channel) values ($1, 'morning_summary', '08:00', 'line')", [shop]);
+    await db.close();
+  });
+
+  it("LINE correction previews, confirms once, and keeps payments, expenses and cost snapshot", async () => {
+    const db = await freshDb();
+    const shop = await one<string>(db, "insert into shops (name) values ('แก้ยอดผ่าน LINE') returning id x");
+    await db.query("insert into line_links (line_user_id, shop_id) values ('U1', $1)", [shop]);
+    const menu = await one<string>(db, "insert into menu_items (shop_id, name, price, unit_cost) values ($1, 'ข้าวมันไก่', 50, 28) returning id x", [shop]);
+    const original = await one<string>(db, "select shop_record_day($1, current_date, $2::jsonb, 'line', 'U1') x", [shop,
+      JSON.stringify({ sales: [{ menu_item_id: menu, quantity: 4 }], cash: 200,
+        expenses: [{ category: "วัตถุดิบ", description: "ข้าว", amount: 20 }] })]);
+    const preview = await one<{ entry_id: string; quantity: number; remaining: number; amount_before: number; amount_after: number }>(db,
+      "select line_correction_preview('U1', current_date, $1, 1) x", [menu]);
+    expect(preview).toMatchObject({ entry_id: original, quantity: 4, remaining: 3, amount_before: 200, amount_after: 150 });
+    const draft = await one<string>(db, `insert into entry_drafts (shop_id, raw_text, parsed, line_user_id, entry_date)
+      values ($1, 'ลบข้าวมันไก่ 1', $2::jsonb, 'U1', current_date) returning id x`, [shop,
+      JSON.stringify({ kind: "decrement", entry_id: original, menu_item_id: menu, quantity: 1, expected_quantity: 4 })]);
+    expect(await one<string | null>(db, "select line_draft_confirm($1, 'U2') x", [draft])).toBeNull();
+    const replacement = await one<string>(db, "select line_draft_confirm($1, 'U1') x", [draft]);
+    expect(replacement).not.toBe(original);
+    expect(await one<string | null>(db, "select line_draft_confirm($1, 'U1') x", [draft])).toBeNull();
+    expect(await one<number>(db, "select quantity::float8 x from entry_sales where entry_id = $1 and menu_item_id = $2", [replacement, menu])).toBe(3);
+    expect(await one<number>(db, "select amount::float8 x from entry_sales where entry_id = $1 and menu_item_id = $2", [replacement, menu])).toBe(150);
+    expect(await one<number>(db, "select cash::float8 x from entry_payments where entry_id = $1", [replacement])).toBe(200);
+    expect(await one<number>(db, "select amount::float8 x from entry_expenses where entry_id = $1", [replacement])).toBe(20);
+    expect(await one<boolean>(db, "select voided_at is not null x from day_entries where id = $1", [original])).toBe(true);
+    const stale = await one<string>(db, `insert into entry_drafts (shop_id, raw_text, parsed, line_user_id, entry_date)
+      values ($1, 'ลบข้าวมันไก่ 1', $2::jsonb, 'U1', current_date) returning id x`, [shop,
+      JSON.stringify({ kind: "decrement", entry_id: original, menu_item_id: menu, quantity: 1, expected_quantity: 4 })]);
+    await expect(db.query("select line_draft_confirm($1, 'U1')", [stale])).rejects.toThrow(/เปลี่ยนไปแล้ว/);
     await db.close();
   });
 });
